@@ -39,7 +39,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Install npm dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Typecheck and build web bundle
         run: |
