@@ -1,0 +1,6 @@
+{
+  "name": "ওমর ফুড — স্মার্ট স্টোর ম্যানেজমেন্ট",
+  "description": "ওমর ফুড (কালিবাড়ী, ঠাকুরগাঁও)-এর জন্য কেন্দ্রীয় পণ্য ডাটাবেস, বারকোড স্ক্যানার ও দ্রুত স্মার্ট হিসাব ক্যালকুলেটর।",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

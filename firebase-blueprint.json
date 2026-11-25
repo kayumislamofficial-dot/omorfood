@@ -1,0 +1,447 @@
+{
+  "entities": {
+    "Category": {
+      "title": "Category",
+      "description": "Product category in the Omor Food central catalog.",
+      "type": "object",
+      "properties": {
+        "nameBn": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Category name in Bengali."
+        },
+        "nameEn": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 80,
+          "description": "Optional category name in English."
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Sort order for display."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of creator."
+        }
+      },
+      "required": ["nameBn", "nameEn", "sortOrder", "createdAt", "updatedAt", "createdBy"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Permanent grocery product record in the Omor Food central database.",
+      "type": "object",
+      "properties": {
+        "nameBn": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Product name in Bengali."
+        },
+        "nameEn": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Product name in English."
+        },
+        "searchKeywords": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "Lowercase searchable string combining Bengali name, English name, and barcode."
+        },
+        "barcode": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-\\.]*$",
+          "description": "Unique product barcode if assigned."
+        },
+        "purchasePrice": {
+          "type": "number",
+          "description": "Purchase price in BDT."
+        },
+        "sellingPrice": {
+          "type": "number",
+          "description": "Selling price in BDT."
+        },
+        "categoryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Reference to category document ID."
+        },
+        "categoryName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Denormalized category display name."
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30,
+          "description": "Unit of measure (কেজি, গ্রাম, লিটার, পিস, প্যাকেট, ইত্যাদি)."
+        },
+        "hasStock": {
+          "type": "boolean",
+          "description": "Whether stock tracking is enabled for this product."
+        },
+        "stockQty": {
+          "type": "number",
+          "description": "Current stock quantity."
+        },
+        "lowStockThreshold": {
+          "type": "number",
+          "description": "Threshold to flag low stock."
+        },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000,
+          "description": "Optional safe product image URL."
+        },
+        "version": {
+          "type": "number",
+          "description": "Monotonic version integer for multi-device conflict handling."
+        },
+        "updatedByName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Name of admin/staff who last updated this product."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of creator."
+        }
+      },
+      "required": [
+        "nameBn",
+        "nameEn",
+        "searchKeywords",
+        "barcode",
+        "purchasePrice",
+        "sellingPrice",
+        "categoryId",
+        "categoryName",
+        "unit",
+        "hasStock",
+        "stockQty",
+        "lowStockThreshold",
+        "imageUrl",
+        "version",
+        "updatedByName",
+        "createdAt",
+        "updatedAt",
+        "createdBy"
+      ]
+    },
+    "BarcodeLock": {
+      "title": "BarcodeLock",
+      "description": "Unique index document mapping a barcode string to a single product ID.",
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Owned product document ID."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of creator."
+        }
+      },
+      "required": ["productId", "createdAt", "createdBy"]
+    },
+    "PriceHistory": {
+      "title": "PriceHistory",
+      "description": "Immutable audit log of product purchase/selling price changes.",
+      "type": "object",
+      "properties": {
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Target product document ID."
+        },
+        "productNameBn": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Product name snapshot at time of price update."
+        },
+        "oldPurchasePrice": {
+          "type": "number",
+          "description": "Previous purchase price."
+        },
+        "newPurchasePrice": {
+          "type": "number",
+          "description": "Updated purchase price."
+        },
+        "oldSellingPrice": {
+          "type": "number",
+          "description": "Previous selling price."
+        },
+        "newSellingPrice": {
+          "type": "number",
+          "description": "Updated selling price."
+        },
+        "changedByStaffId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Staff profile ID that made the change."
+        },
+        "changedByName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Display name of the admin/staff who changed the price."
+        },
+        "changedByRole": {
+          "type": "string",
+          "enum": ["admin", "staff"],
+          "description": "Role of the user who changed the price."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of change."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of creator."
+        }
+      },
+      "required": [
+        "productId",
+        "productNameBn",
+        "oldPurchasePrice",
+        "newPurchasePrice",
+        "oldSellingPrice",
+        "newSellingPrice",
+        "changedByStaffId",
+        "changedByName",
+        "changedByRole",
+        "createdAt",
+        "createdBy"
+      ]
+    },
+    "StaffProfile": {
+      "title": "StaffProfile",
+      "description": "Admin and Staff PIN profile for store access control.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Staff display name."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "staff"],
+          "description": "Permission role."
+        },
+        "pinHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 128,
+          "pattern": "^[a-f0-9]+$",
+          "description": "Salted SHA-256 hex digest of PIN."
+        },
+        "pinSalt": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]+$",
+          "description": "Random hex salt for PIN hashing."
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether staff member is allowed to log in."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of creator."
+        }
+      },
+      "required": ["name", "role", "pinHash", "pinSalt", "isActive", "createdAt", "updatedAt", "createdBy"]
+    },
+    "AuthorizedAccount": {
+      "title": "AuthorizedAccount",
+      "description": "Google account email authorized to connect a device to the Omor Food database.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 160,
+          "description": "Lowercase Google account email."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Device or staff label."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "staff"],
+          "description": "Device Google account authorization level."
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether device access is active."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update."
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of creator."
+        }
+      },
+      "required": ["email", "label", "role", "isActive", "createdAt", "updatedAt", "createdBy"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Global store configuration for Omor Food.",
+      "type": "object",
+      "properties": {
+        "storeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Store display name."
+        },
+        "storeAddress": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Store physical address."
+        },
+        "storePhones": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Store contact phone numbers."
+        },
+        "hidePurchasePriceForStaff": {
+          "type": "boolean",
+          "description": "When true, purchase price and profit are hidden from staff PIN sessions."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of update."
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of updater."
+        }
+      },
+      "required": ["storeName", "storeAddress", "storePhones", "hidePurchasePriceForStaff", "updatedAt", "updatedBy"]
+    }
+  },
+  "firestore": {
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Product categories shared across all store devices."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Central grocery product catalog with prices, barcodes, and optional stock."
+    },
+    "/barcodes/{barcodeId}": {
+      "schema": { "$ref": "#/entities/BarcodeLock" },
+      "description": "Atomic uniqueness lock preventing duplicate barcodes."
+    },
+    "/priceHistory/{historyId}": {
+      "schema": { "$ref": "#/entities/PriceHistory" },
+      "description": "Immutable history of product price updates."
+    },
+    "/staff/{staffId}": {
+      "schema": { "$ref": "#/entities/StaffProfile" },
+      "description": "Salted-hashed PIN profiles for Admin and Staff."
+    },
+    "/authorizedEmails/{emailId}": {
+      "schema": { "$ref": "#/entities/AuthorizedAccount" },
+      "description": "Google account allowlist for store phones and counter devices."
+    },
+    "/storeSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/StoreSettings" },
+      "description": "Store settings including purchase price visibility control."
+    }
+  }
+}

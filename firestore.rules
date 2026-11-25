@@ -1,0 +1,323 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Hardened Helpers
+    // -------------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidBarcodeId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    function isValidEmailId(id) {
+      return id is string && id.size() >= 5 && id.size() <= 160 && id.matches('^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string;
+    }
+
+    function userEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isOwnerEmail() {
+      return isSignedIn() && userEmail() == 'kayumislam.official@gmail.com';
+    }
+
+    function isAuthorizedDevice() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/authorizedEmails/$(userEmail()))
+        && get(/databases/$(database)/documents/authorizedEmails/$(userEmail())).data.isActive == true;
+    }
+
+    function isStoreMember() {
+      return isOwnerEmail() || isAuthorizedDevice();
+    }
+
+    function isAdmin() {
+      return isOwnerEmail() || (
+        isAuthorizedDevice()
+        && get(/databases/$(database)/documents/authorizedEmails/$(userEmail())).data.role == 'admin'
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidCategory(data) {
+      return data.keys().hasAll(['nameBn', 'nameEn', 'sortOrder', 'createdAt', 'updatedAt', 'createdBy'])
+        && data.keys().hasOnly(['nameBn', 'nameEn', 'sortOrder', 'createdAt', 'updatedAt', 'createdBy'])
+        && data.nameBn is string && data.nameBn.size() >= 1 && data.nameBn.size() <= 80
+        && data.nameEn is string && data.nameEn.size() <= 80
+        && data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 100000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.createdBy is string && isValidId(data.createdBy);
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'nameBn', 'nameEn', 'searchKeywords', 'barcode',
+          'purchasePrice', 'sellingPrice', 'categoryId', 'categoryName',
+          'unit', 'hasStock', 'stockQty', 'lowStockThreshold',
+          'imageUrl', 'version', 'updatedByName',
+          'createdAt', 'updatedAt', 'createdBy'
+        ])
+        && data.keys().hasOnly([
+          'nameBn', 'nameEn', 'searchKeywords', 'barcode',
+          'purchasePrice', 'sellingPrice', 'categoryId', 'categoryName',
+          'unit', 'hasStock', 'stockQty', 'lowStockThreshold',
+          'imageUrl', 'version', 'updatedByName',
+          'createdAt', 'updatedAt', 'createdBy'
+        ])
+        && data.nameBn is string && data.nameBn.size() >= 1 && data.nameBn.size() <= 120
+        && data.nameEn is string && data.nameEn.size() <= 120
+        && data.searchKeywords is string && data.searchKeywords.size() >= 1 && data.searchKeywords.size() <= 300
+        && data.barcode is string && data.barcode.size() <= 64 && data.barcode.matches('^[a-zA-Z0-9_\\-\\.]*$')
+        && data.purchasePrice is number && data.purchasePrice >= 0 && data.purchasePrice <= 10000000
+        && data.sellingPrice is number && data.sellingPrice >= 0 && data.sellingPrice <= 10000000
+        && data.categoryId is string && isValidId(data.categoryId)
+        && data.categoryName is string && data.categoryName.size() >= 1 && data.categoryName.size() <= 80
+        && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 30
+        && data.hasStock is bool
+        && data.stockQty is number && data.stockQty >= 0 && data.stockQty <= 10000000
+        && data.lowStockThreshold is number && data.lowStockThreshold >= 0 && data.lowStockThreshold <= 1000000
+        && data.imageUrl is string && data.imageUrl.size() <= 1000
+        && (data.imageUrl == '' || data.imageUrl.matches('^https://.*') || data.imageUrl.matches('^/assets/.*'))
+        && data.version is number && data.version >= 1 && data.version <= 10000000
+        && data.updatedByName is string && data.updatedByName.size() >= 1 && data.updatedByName.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.createdBy is string && isValidId(data.createdBy);
+    }
+
+    function isValidBarcodeLock(data) {
+      return data.keys().hasAll(['productId', 'createdAt', 'createdBy'])
+        && data.keys().hasOnly(['productId', 'createdAt', 'createdBy'])
+        && data.productId is string && isValidId(data.productId)
+        && data.createdAt is timestamp
+        && data.createdBy is string && isValidId(data.createdBy);
+    }
+
+    function isValidPriceHistory(data) {
+      return data.keys().hasAll([
+          'productId', 'productNameBn',
+          'oldPurchasePrice', 'newPurchasePrice',
+          'oldSellingPrice', 'newSellingPrice',
+          'changedByStaffId', 'changedByName', 'changedByRole',
+          'createdAt', 'createdBy'
+        ])
+        && data.keys().hasOnly([
+          'productId', 'productNameBn',
+          'oldPurchasePrice', 'newPurchasePrice',
+          'oldSellingPrice', 'newSellingPrice',
+          'changedByStaffId', 'changedByName', 'changedByRole',
+          'createdAt', 'createdBy'
+        ])
+        && data.productId is string && isValidId(data.productId)
+        && data.productNameBn is string && data.productNameBn.size() >= 1 && data.productNameBn.size() <= 120
+        && data.oldPurchasePrice is number && data.oldPurchasePrice >= 0 && data.oldPurchasePrice <= 10000000
+        && data.newPurchasePrice is number && data.newPurchasePrice >= 0 && data.newPurchasePrice <= 10000000
+        && data.oldSellingPrice is number && data.oldSellingPrice >= 0 && data.oldSellingPrice <= 10000000
+        && data.newSellingPrice is number && data.newSellingPrice >= 0 && data.newSellingPrice <= 10000000
+        && data.changedByStaffId is string && isValidId(data.changedByStaffId)
+        && data.changedByName is string && data.changedByName.size() >= 1 && data.changedByName.size() <= 80
+        && data.changedByRole in ['admin', 'staff']
+        && data.createdAt is timestamp
+        && data.createdBy is string && isValidId(data.createdBy);
+    }
+
+    function isValidStaff(data) {
+      return data.keys().hasAll(['name', 'role', 'pinHash', 'pinSalt', 'isActive', 'createdAt', 'updatedAt', 'createdBy'])
+        && data.keys().hasOnly(['name', 'role', 'pinHash', 'pinSalt', 'isActive', 'createdAt', 'updatedAt', 'createdBy'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.role in ['admin', 'staff']
+        && data.pinHash is string && data.pinHash.size() >= 64 && data.pinHash.size() <= 128 && data.pinHash.matches('^[a-f0-9]+$')
+        && data.pinSalt is string && data.pinSalt.size() >= 16 && data.pinSalt.size() <= 64 && data.pinSalt.matches('^[a-f0-9]+$')
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.createdBy is string && isValidId(data.createdBy);
+    }
+
+    function isValidAuthorizedEmail(data, emailId) {
+      return data.keys().hasAll(['email', 'label', 'role', 'isActive', 'createdAt', 'updatedAt', 'createdBy'])
+        && data.keys().hasOnly(['email', 'label', 'role', 'isActive', 'createdAt', 'updatedAt', 'createdBy'])
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 160 && data.email == emailId
+        && data.label is string && data.label.size() >= 1 && data.label.size() <= 80
+        && data.role in ['admin', 'staff']
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.createdBy is string && isValidId(data.createdBy);
+    }
+
+    function isValidStoreSettings(data) {
+      return data.keys().hasAll(['storeName', 'storeAddress', 'storePhones', 'hidePurchasePriceForStaff', 'updatedAt', 'updatedBy'])
+        && data.keys().hasOnly(['storeName', 'storeAddress', 'storePhones', 'hidePurchasePriceForStaff', 'updatedAt', 'updatedBy'])
+        && data.storeName is string && data.storeName.size() >= 1 && data.storeName.size() <= 80
+        && data.storeAddress is string && data.storeAddress.size() >= 1 && data.storeAddress.size() <= 160
+        && data.storePhones is string && data.storePhones.size() >= 1 && data.storePhones.size() <= 120
+        && data.hidePurchasePriceForStaff is bool
+        && data.updatedAt is timestamp
+        && data.updatedBy is string && isValidId(data.updatedBy);
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+    match /test/{docId} {
+      allow get: if isSignedIn() && isValidId(docId);
+    }
+
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId) && isStoreMember();
+      allow list: if isStoreMember();
+      allow create: if isAdmin()
+        && isValidId(categoryId)
+        && isValidCategory(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(categoryId)
+        && isValidCategory(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nameBn', 'nameEn', 'sortOrder', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(categoryId);
+    }
+
+    match /products/{productId} {
+      allow get: if isValidId(productId) && isStoreMember();
+      allow list: if isStoreMember();
+      allow create: if isAdmin()
+        && isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/categories/$(incoming().categoryId))
+        && (incoming().barcode == '' || existsAfter(/databases/$(database)/documents/barcodes/$(incoming().barcode)));
+      allow update: if isAdmin()
+        && isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().version == existing().version + 1
+        && exists(/databases/$(database)/documents/categories/$(incoming().categoryId))
+        && (incoming().barcode == '' || incoming().barcode == existing().barcode || existsAfter(/databases/$(database)/documents/barcodes/$(incoming().barcode)))
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'nameBn', 'nameEn', 'searchKeywords', 'barcode',
+          'purchasePrice', 'sellingPrice', 'categoryId', 'categoryName',
+          'unit', 'hasStock', 'stockQty', 'lowStockThreshold',
+          'imageUrl', 'version', 'updatedByName', 'updatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    match /barcodes/{barcodeId} {
+      allow get: if isValidBarcodeId(barcodeId) && isStoreMember();
+      allow create: if isAdmin()
+        && isValidBarcodeId(barcodeId)
+        && isValidBarcodeLock(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/products/$(incoming().productId));
+      allow update: if false;
+      allow delete: if isAdmin() && isValidBarcodeId(barcodeId);
+    }
+
+    match /priceHistory/{historyId} {
+      allow get: if isValidId(historyId) && isStoreMember();
+      allow list: if isStoreMember();
+      allow create: if isAdmin()
+        && isValidId(historyId)
+        && isValidPriceHistory(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/products/$(incoming().productId));
+      allow update, delete: if false;
+    }
+
+    match /staff/{staffId} {
+      allow get: if isValidId(staffId) && isStoreMember();
+      allow list: if isStoreMember();
+      allow create: if isAdmin()
+        && isValidId(staffId)
+        && isValidStaff(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(staffId)
+        && isValidStaff(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role', 'pinHash', 'pinSalt', 'isActive', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(staffId);
+    }
+
+    match /authorizedEmails/{emailId} {
+      allow get: if isValidEmailId(emailId) && (isAdmin() || (isSignedIn() && userEmail() == emailId));
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidEmailId(emailId)
+        && isValidAuthorizedEmail(incoming(), emailId)
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidEmailId(emailId)
+        && isValidAuthorizedEmail(incoming(), emailId)
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['label', 'role', 'isActive', 'updatedAt']);
+      allow delete: if isAdmin() && isValidEmailId(emailId);
+    }
+
+    match /storeSettings/{settingId} {
+      allow get: if isValidId(settingId) && isStoreMember();
+      allow list: if isStoreMember();
+      allow create: if isAdmin()
+        && isValidId(settingId)
+        && isValidStoreSettings(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(settingId)
+        && isValidStoreSettings(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'storeName', 'storeAddress', 'storePhones', 'hidePurchasePriceForStaff', 'updatedAt', 'updatedBy'
+        ]);
+      allow delete: if false;
+    }
+  }
+}
