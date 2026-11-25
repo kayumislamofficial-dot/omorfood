@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
 } from 'firebase/auth';
@@ -39,6 +40,7 @@ export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export const OWNER_ADMIN_EMAIL = 'kayumislam.official@gmail.com';
+export const STORE_ACCESS_EMAIL = 'store@amorfood.local';
 
 export enum OperationType {
   CREATE = 'create',
@@ -104,6 +106,10 @@ export async function testConnection(): Promise<boolean> {
     // Any non-offline error (like not-found or permission before login) still means network reached Firestore
     return true;
   }
+}
+
+export async function signInWithStorePasscode(passcode: string) {
+  return signInWithEmailAndPassword(auth, STORE_ACCESS_EMAIL, passcode);
 }
 
 export async function signInWithGoogleDevice() {

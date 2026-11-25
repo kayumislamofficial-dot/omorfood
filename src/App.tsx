@@ -43,6 +43,7 @@ import {
   handleFirestoreError,
   OperationType,
   OWNER_ADMIN_EMAIL,
+  STORE_ACCESS_EMAIL,
   testConnection,
 } from './lib/firebase';
 import {
@@ -102,7 +103,7 @@ function StoreApplication() {
     let active = true;
     loadOfflineSnapshot().then((snap) => {
       if (!active) return;
-      if (snap.deviceAuth?.isAuthorized && snap.staff.length > 0) {
+      if (snap.deviceAuth?.isAuthorized) {
         setCachedAuth(snap.deviceAuth);
         setStaffList(snap.staff);
         setCategories(snap.categories);
@@ -158,19 +159,26 @@ function StoreApplication() {
   }, []);
 
   const userEmail = (firebaseUser?.email || '').trim().toLowerCase();
+  const isStorePasscodeAccount = Boolean(firebaseUser && userEmail === STORE_ACCESS_EMAIL);
   const isOwnerEmail = Boolean(
     firebaseUser?.emailVerified && userEmail === OWNER_ADMIN_EMAIL
   );
 
-  // Check authorizedEmails/{userEmail} for non-owner staff phones
+  // Check authorizedEmails/{userEmail} for non-owner Google phones
   useEffect(() => {
-    if (!firebaseUser || !firebaseUser.emailVerified || !userEmail) {
+    if (!firebaseUser || !userEmail) {
       setAuthDoc(null);
       setAuthDocChecked(true);
       return;
     }
 
-    if (isOwnerEmail) {
+    if (isOwnerEmail || isStorePasscodeAccount) {
+      setAuthDocChecked(true);
+      return;
+    }
+
+    if (!firebaseUser.emailVerified) {
+      setAuthDoc(null);
       setAuthDocChecked(true);
       return;
     }
@@ -194,21 +202,25 @@ function StoreApplication() {
     );
 
     return () => unsub();
-  }, [firebaseUser, userEmail, isOwnerEmail]);
+  }, [firebaseUser, userEmail, isOwnerEmail, isStorePasscodeAccount]);
 
   const isAuthorizedDevice = Boolean(
-    firebaseUser?.emailVerified &&
-      (isOwnerEmail || (authDoc !== null && authDoc.isActive))
+    firebaseUser &&
+      (isStorePasscodeAccount ||
+        (firebaseUser.emailVerified &&
+          (isOwnerEmail || (authDoc !== null && authDoc.isActive))))
   );
 
   const isDeviceAdmin = Boolean(
-    firebaseUser?.emailVerified &&
-      (isOwnerEmail || (authDoc !== null && authDoc.isActive && authDoc.role === 'admin'))
+    firebaseUser &&
+      (isStorePasscodeAccount ||
+        (firebaseUser.emailVerified &&
+          (isOwnerEmail || (authDoc !== null && authDoc.isActive && authDoc.role === 'admin'))))
   );
 
   const hasOfflineDeviceCache = Boolean(
     cachedAuth?.isAuthorized &&
-      staffList.length > 0 &&
+      (staffList.length > 0 || Boolean(cachedAuth.storePassHash)) &&
       (!firebaseUser || (!isOnline && cachedAuth.email === userEmail))
   );
 
@@ -217,14 +229,18 @@ function StoreApplication() {
   // Persist device authorization metadata to IndexedDB when online-verified
   useEffect(() => {
     if (isAuthorizedDevice && userEmail) {
-      const nextAuth: CachedDeviceAuth = {
-        email: userEmail,
-        isAuthorized: true,
-        isDeviceAdmin,
-        savedAt: Date.now(),
-      };
-      setCachedAuth(nextAuth);
-      void saveOfflineKey('deviceAuth', nextAuth);
+      setCachedAuth((prev) => {
+        const nextAuth: CachedDeviceAuth = {
+          email: userEmail,
+          isAuthorized: true,
+          isDeviceAdmin,
+          savedAt: Date.now(),
+          storePassSalt: prev?.storePassSalt,
+          storePassHash: prev?.storePassHash,
+        };
+        void saveOfflineKey('deviceAuth', nextAuth);
+        return nextAuth;
+      });
     }
   }, [isAuthorizedDevice, isDeviceAdmin, userEmail]);
 
@@ -260,6 +276,7 @@ function StoreApplication() {
         // Real-time enforcement: if active staff gets disabled or deleted, lock immediately
         setActiveStaff((prev) => {
           if (!prev) return null;
+          if (prev.id === 'store-admin') return prev;
           const updated = list.find((s) => s.id === prev.id);
           if (!updated || !updated.isActive) {
             setLockNotice('আপনার অ্যাক্সেস অ্যাডমিন কর্তৃক বন্ধ বা পরিবর্তন করা হয়েছে।');
@@ -413,12 +430,24 @@ function StoreApplication() {
       <PinLoginScreen
         firebaseUser={firebaseUser}
         isAuthorizedDevice={effectiveDeviceAuthorized}
-        offlineDeviceEmail={hasOfflineDeviceCache ? cachedAuth?.email || null : null}
+        cachedAuth={cachedAuth}
         isOnline={isOnline}
         canCreateAdminBootstrap={isDeviceAdmin}
         staffList={staffList}
         staffLoading={staffLoading}
         lockNotice={lockNotice}
+        onStorePasscodeSuccess={(salt, hash) => {
+          const nextAuth: CachedDeviceAuth = {
+            email: STORE_ACCESS_EMAIL,
+            isAuthorized: true,
+            isDeviceAdmin: true,
+            savedAt: Date.now(),
+            storePassSalt: salt,
+            storePassHash: hash,
+          };
+          setCachedAuth(nextAuth);
+          void saveOfflineKey('deviceAuth', nextAuth);
+        }}
         onClearOfflineDevice={() => {
           setCachedAuth(null);
           setStaffList([]);

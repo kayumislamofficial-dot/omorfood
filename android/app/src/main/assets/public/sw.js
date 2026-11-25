@@ -87,7 +87,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "revision": "662b856b8779b60bf45952da40d64488"
   }, {
     "url": "index.html",
-    "revision": "2eae4a58c93106a62db68d76f69c4ec1"
+    "revision": "8925e6421e019991fb3e55101ad7ddc5"
   }, {
     "url": "icon.svg",
     "revision": "581a05c8baa453b5a548227d2404f8c2"
@@ -98,13 +98,31 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/workbox-window.prod.es5-Bd17z0YL.js",
     "revision": null
   }, {
-    "url": "assets/web-dAei8423.js",
+    "url": "assets/web-DFyTvQH5.js",
     "revision": null
   }, {
-    "url": "assets/index-Bhm3gkIW.js",
+    "url": "assets/index-crllrCXd.css",
     "revision": null
   }, {
-    "url": "assets/index-2uqtu3zw.css",
+    "url": "assets/index-XH5W7Yex.js",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/image_d2221ce2.png",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/image_7bef779f.png",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/image_75ac9383.png",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/image_289a46f5.png",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/image_22a54098.png",
+    "revision": null
+  }, {
+    "url": "assets/aistudio/image_00a6996f.png",
     "revision": null
   }, {
     "url": "apple-touch-icon.png",

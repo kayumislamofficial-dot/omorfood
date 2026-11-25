@@ -16,6 +16,8 @@ export interface CachedDeviceAuth {
   isAuthorized: boolean;
   isDeviceAdmin: boolean;
   savedAt: number;
+  storePassSalt?: string;
+  storePassHash?: string;
 }
 
 export interface PendingOfflineBarcode {

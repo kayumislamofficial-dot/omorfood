@@ -45,6 +45,13 @@ service cloud.firestore {
       return isSignedIn() && userEmail() == 'kayumislam.official@gmail.com';
     }
 
+    function isStorePasscodeUser() {
+      return request.auth != null
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() == 'store@amorfood.local'
+        && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+
     function isAuthorizedDevice() {
       return isSignedIn()
         && exists(/databases/$(database)/documents/authorizedEmails/$(userEmail()))
@@ -52,11 +59,11 @@ service cloud.firestore {
     }
 
     function isStoreMember() {
-      return isOwnerEmail() || isAuthorizedDevice();
+      return isOwnerEmail() || isAuthorizedDevice() || isStorePasscodeUser();
     }
 
     function isAdmin() {
-      return isOwnerEmail() || (
+      return isOwnerEmail() || isStorePasscodeUser() || (
         isAuthorizedDevice()
         && get(/databases/$(database)/documents/authorizedEmails/$(userEmail())).data.role == 'admin'
       );
@@ -188,7 +195,7 @@ service cloud.firestore {
     // Collection Rules
     // -------------------------------------------------------------------------
     match /test/{docId} {
-      allow get: if isSignedIn() && isValidId(docId);
+      allow get: if isValidId(docId) && (isSignedIn() || isStorePasscodeUser());
     }
 
     match /categories/{categoryId} {

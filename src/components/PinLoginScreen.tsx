@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import { Delete, KeyRound, Lock, LogOut, ShieldCheck, Smartphone, UserPlus } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Lock, LogOut, ShieldCheck, UserPlus } from 'lucide-react';
 import { type User } from 'firebase/auth';
-import { verifyPin } from '../lib/crypto';
-import { signInWithGoogleDevice, signOutGoogleDevice } from '../lib/firebase';
-import { toBnDigits } from '../lib/format';
+import { generateSaltHex, hashPin, verifyPin } from '../lib/crypto';
+import {
+  signInWithGoogleDevice,
+  signInWithStorePasscode,
+  signOutGoogleDevice,
+  STORE_ACCESS_EMAIL,
+} from '../lib/firebase';
+import { type CachedDeviceAuth } from '../lib/offlineDb';
 import { createStaffProfile } from '../services/storeService';
 import { type StaffProfile } from '../types/store';
 import { OmorFoodMark } from './BrandLogo';
@@ -13,33 +18,48 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface PinLoginScreenProps {
   firebaseUser: User | null;
   isAuthorizedDevice: boolean;
-  offlineDeviceEmail?: string | null;
+  cachedAuth?: CachedDeviceAuth | null;
   isOnline?: boolean;
   canCreateAdminBootstrap: boolean;
   staffList: StaffProfile[];
   staffLoading: boolean;
   lockNotice?: string;
+  onStorePasscodeSuccess: (salt: string, hash: string) => void;
   onClearOfflineDevice?: () => void;
   onUnlock: (staff: StaffProfile) => void;
 }
 
+const DEFAULT_STORE_SESSION: StaffProfile = {
+  id: 'store-admin',
+  name: 'ওমর ফুড',
+  role: 'admin',
+  pinHash: '',
+  pinSalt: '',
+  isActive: true,
+  createdAt: null,
+  updatedAt: null,
+  createdBy: 'store-admin',
+};
+
 export function PinLoginScreen({
   firebaseUser,
   isAuthorizedDevice,
-  offlineDeviceEmail = null,
+  cachedAuth = null,
   isOnline = true,
   canCreateAdminBootstrap,
   staffList,
   staffLoading,
   lockNotice,
+  onStorePasscodeSuccess,
   onClearOfflineDevice,
   onUnlock,
 }: PinLoginScreenProps) {
-  const [pinInput, setPinInput] = useState('');
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [showPasscode, setShowPasscode] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isChecking, setIsChecking] = useState(false);
 
-  // First-run Admin PIN bootstrap state
+  // Optional Google first-run Admin PIN bootstrap (only when connected via Google email)
   const [adminName, setAdminName] = useState('ওমর ফুড অ্যাডমিন');
   const [setupPin, setSetupPin] = useState('');
   const [setupConfirm, setSetupConfirm] = useState('');
@@ -55,7 +75,7 @@ export function PinLoginScreen({
       if (msg.includes('popup-closed')) {
         setErrorMsg('লগইন উইন্ডোটি বন্ধ করা হয়েছে। আবার চেষ্টা করুন।');
       } else {
-        setErrorMsg('Google অ্যাকাউন্ট সংযুক্ত করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+        setErrorMsg('Google অ্যাকাউন্ট সংযুক্ত করতে সমস্যা হয়েছে।');
       }
     } finally {
       setIsConnectingGoogle(false);
@@ -93,57 +113,109 @@ export function PinLoginScreen({
     }
   };
 
-  const verifyEnteredPin = async (candidatePin: string) => {
-    if (!candidatePin || candidatePin.length < 4) {
-      setErrorMsg('কমপক্ষে ৪ সংখ্যার পিন দিন।');
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const candidate = passcodeInput.trim();
+    if (candidate.length < 4) {
+      setErrorMsg('সঠিক স্টোর পাসকোড বা পিন দিন (কমপক্ষে ৪ অক্ষর)।');
       return;
     }
+
     setErrorMsg('');
     setIsChecking(true);
+
     try {
-      let matchedInactive = false;
-      for (const staff of staffList) {
-        const isMatch = await verifyPin(candidatePin, staff.pinSalt, staff.pinHash);
-        if (isMatch) {
-          if (!staff.isActive) {
-            matchedInactive = true;
-            break;
+      // 1. Check staff/admin 4-6 digit PIN profiles if device already has staff records
+      if ((isAuthorizedDevice || cachedAuth?.isAuthorized) && staffList.length > 0) {
+        let matchedInactive = false;
+        for (const staff of staffList) {
+          const isMatch = await verifyPin(candidate, staff.pinSalt, staff.pinHash);
+          if (isMatch) {
+            if (!staff.isActive) {
+              matchedInactive = true;
+              break;
+            }
+            setPasscodeInput('');
+            onUnlock(staff);
+            return;
           }
-          setPinInput('');
-          onUnlock(staff);
+        }
+        if (matchedInactive) {
+          setErrorMsg('আপনার স্টাফ অ্যাক্সেস বর্তমানে অ্যাডমিন কর্তৃক বন্ধ করা হয়েছে।');
+          setPasscodeInput('');
           return;
         }
       }
-      if (matchedInactive) {
-        setErrorMsg('আপনার স্টাফ অ্যাক্সেস বর্তমানে অ্যাডমিন কর্তৃক বন্ধ করা হয়েছে।');
-      } else {
-        setErrorMsg('ভুল পিন! অনুগ্রহ করে সঠিক পিন দিন।');
+
+      // 2. Check cached salted SHA-256 store passcode locally (works 100% offline & fast on lock screen)
+      if (cachedAuth?.storePassHash && cachedAuth?.storePassSalt) {
+        const matchesCachedPasscode = await verifyPin(
+          candidate,
+          cachedAuth.storePassSalt,
+          cachedAuth.storePassHash
+        );
+        if (matchesCachedPasscode && (isAuthorizedDevice || !isOnline)) {
+          setPasscodeInput('');
+          onUnlock(DEFAULT_STORE_SESSION);
+          return;
+        }
       }
-      setPinInput('');
-    } catch {
-      setErrorMsg('পিন যাচাই করতে সমস্যা হয়েছে।');
+
+      // 3. Authenticate online with Firebase Email/Password using shared store ID (no Gmail needed)
+      if (!isOnline) {
+        if (!cachedAuth?.isAuthorized) {
+          setErrorMsg('প্রথমবার এই ফোনে প্রবেশ করতে ইন্টারনেট চালু করে স্টোর পাসকোড দিন।');
+        } else {
+          setErrorMsg('ভুল পাসকোড বা পিন! অনুগ্রহ করে সঠিক পাসকোড দিন।');
+        }
+        setPasscodeInput('');
+        return;
+      }
+
+      await signInWithStorePasscode(candidate);
+      const salt = generateSaltHex(16);
+      const hash = await hashPin(candidate, salt);
+      onStorePasscodeSuccess(salt, hash);
+      setPasscodeInput('');
+      onUnlock(DEFAULT_STORE_SESSION);
+    } catch (err) {
+      const code = (err as { code?: string })?.code || '';
+      const msg = err instanceof Error ? err.message : '';
+      if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
+        setErrorMsg(
+          'Firebase Console > Authentication > Sign-in method থেকে Email/Password চালু করুন।'
+        );
+      } else if (code === 'auth/user-not-found') {
+        setErrorMsg(
+          `Firebase Console > Authentication > Users-এ "${STORE_ACCESS_EMAIL}" অ্যাকাউন্টটি যোগ করুন।`
+        );
+      } else if (code === 'auth/network-request-failed') {
+        setErrorMsg('ইন্টারনেট সংযোগ পাওয়া যায়নি। নেটওয়ার্ক চালু করে আবার চেষ্টা করুন।');
+      } else if (code === 'auth/too-many-requests') {
+        setErrorMsg('অনেকবার ভুল চেষ্টা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।');
+      } else {
+        setErrorMsg('ভুল পাসকোড! অনুগ্রহ করে সঠিক স্টোর পাসকোড দিন।');
+      }
+      setPasscodeInput('');
     } finally {
       setIsChecking(false);
     }
   };
 
-  const appendDigit = (digit: string) => {
-    if (isChecking || pinInput.length >= 6) return;
-    setErrorMsg('');
-    const next = pinInput + digit;
-    setPinInput(next);
-  };
+  const isUnauthorizedGoogleUser = Boolean(
+    firebaseUser &&
+      firebaseUser.email?.toLowerCase() !== STORE_ACCESS_EMAIL &&
+      !isAuthorizedDevice
+  );
 
-  const removeLastDigit = () => {
-    if (isChecking) return;
-    setErrorMsg('');
-    setPinInput((prev) => prev.slice(0, -1));
-  };
-
-  const handlePinFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void verifyEnteredPin(pinInput);
-  };
+  const isGoogleAdminNeedsBootstrap = Boolean(
+    firebaseUser &&
+      firebaseUser.email?.toLowerCase() !== STORE_ACCESS_EMAIL &&
+      isAuthorizedDevice &&
+      !staffLoading &&
+      staffList.length === 0 &&
+      canCreateAdminBootstrap
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/60 to-slate-100 flex items-center justify-center p-4 sm:p-6">
@@ -177,44 +249,15 @@ export function PinLoginScreen({
             </div>
           )}
 
-          {/* Step 1: Device not yet connected with Google (and no offline cache) */}
-          {!firebaseUser && !offlineDeviceEmail && (
-            <div className="space-y-5 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 mx-auto flex items-center justify-center">
-                <Smartphone className="w-6 h-6" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">কেন্দ্রীয় ডাটাবেসে সংযুক্ত হোন</h2>
-                <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
-                  সব মোবাইল ও কম্পিউটারে একই পণ্যের তালিকা ও দাম দেখতে একবার Google অ্যাকাউন্ট দিয়ে ডিভাইসটি সংযুক্ত করুন। এরপর ইন্টারনেট ছাড়াও পিন দিয়ে লগইন করতে পারবেন।
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleGoogleConnect}
-                disabled={isConnectingGoogle || !isOnline}
-                className="w-full min-h-[48px] px-5 py-3 rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-blue-400 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <ShieldCheck className="w-5 h-5" />
-                {!isOnline
-                  ? 'প্রথমবার সংযোগের জন্য ইন্টারনেট চালু করুন'
-                  : isConnectingGoogle
-                  ? 'সংযুক্ত হচ্ছে...'
-                  : 'Google দিয়ে ডিভাইস সংযুক্ত করুন'}
-              </button>
-            </div>
-          )}
-
-          {/* Step 2: Google signed in, but email not authorized by Admin */}
-          {firebaseUser && !isAuthorizedDevice && (
+          {isUnauthorizedGoogleUser ? (
             <div className="space-y-5 text-center">
               <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-700 mx-auto flex items-center justify-center">
                 <Lock className="w-6 h-6" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-slate-900">ডিভাইস অনুমোদনের অপেক্ষায়</h2>
+                <h2 className="text-lg font-bold text-slate-900">এই Google অ্যাকাউন্টটি অনুমোদিত নয়</h2>
                 <p className="text-sm text-slate-600 mt-1.5 leading-relaxed">
-                  আপনার ইমেইল <span className="font-mono-num font-semibold text-slate-900">{firebaseUser.email}</span> এখনও স্টোর অ্যাডমিনের অনুমোদিত তালিকায় যুক্ত নেই। অ্যাডমিনকে বলুন স্টাফ সেকশন থেকে এই ইমেইলটি অনুমোদন করতে।
+                  আপনি চাইলে কোনো জিমেইল ছাড়াই সরাসরি স্টোর পাসকোড দিয়ে প্রবেশ করতে পারেন।
                 </p>
               </div>
               <button
@@ -223,206 +266,159 @@ export function PinLoginScreen({
                   onClearOfflineDevice?.();
                   void signOutGoogleDevice();
                 }}
-                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 font-semibold text-sm inline-flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold text-sm inline-flex items-center justify-center gap-2 cursor-pointer"
               >
                 <LogOut className="w-4 h-4" />
-                অন্য Google অ্যাকাউন্ট ব্যবহার করুন
+                পাসকোড লগইন স্ক্রিনে ফিরে যান
               </button>
             </div>
-          )}
-
-          {/* Step 3: Loading staff profiles */}
-          {isAuthorizedDevice && staffLoading && (
-            <div className="py-10 text-center space-y-3">
-              <div className="w-8 h-8 border-2 border-blue-700 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-sm text-slate-600">ডাটাবেস থেকে তথ্য লোড হচ্ছে...</p>
-            </div>
-          )}
-
-          {/* Step 4: First-Run Admin PIN Bootstrap */}
-          {firebaseUser && isAuthorizedDevice && !staffLoading && staffList.length === 0 && (
-            <div>
-              {canCreateAdminBootstrap ? (
-                <form onSubmit={handleBootstrapAdmin} className="space-y-4">
-                  <div className="flex items-center gap-2.5 mb-2">
-                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
-                      <UserPlus className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h2 className="text-base font-bold text-slate-900">প্রথম অ্যাডমিন পিন সেটআপ</h2>
-                      <p className="text-xs text-slate-500">দোকান পরিচালনার জন্য আপনার ৪–৬ সংখ্যার গোপন পিন তৈরি করুন</p>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">অ্যাডমিনের নাম</label>
-                    <input
-                      type="text"
-                      value={adminName}
-                      onChange={(e) => setAdminName(e.target.value)}
-                      className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
-                      placeholder="যেমন: ওমর ফুড ম্যানেজার"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">নতুন পিন (৪–৬ সংখ্যা)</label>
-                    <input
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={setupPin}
-                      onChange={(e) => setSetupPin(e.target.value.replace(/\D/g, ''))}
-                      className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm font-mono-num tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600"
-                      placeholder="••••"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">পিন নিশ্চিত করুন</label>
-                    <input
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={setupConfirm}
-                      onChange={(e) => setSetupConfirm(e.target.value.replace(/\D/g, ''))}
-                      className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm font-mono-num tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600"
-                      placeholder="••••"
-                      required
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isChecking}
-                    className="w-full min-h-[48px] rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-blue-400 text-white font-semibold text-sm transition-colors cursor-pointer"
-                  >
-                    {isChecking ? 'সংরক্ষণ হচ্ছে...' : 'অ্যাডমিন পিন সংরক্ষণ করুন'}
-                  </button>
-                </form>
-              ) : (
-                <div className="text-center space-y-3 py-4">
-                  <p className="text-sm text-slate-700">
-                    এখনও কোনো অ্যাডমিন পিন তৈরি হয়নি। প্রথমে দোকানের অ্যাডমিনকে পিন সেটআপ করতে বলুন।
-                  </p>
+          ) : isGoogleAdminNeedsBootstrap ? (
+            <form onSubmit={handleBootstrapAdmin} className="space-y-4">
+              <div className="flex items-center gap-2.5 mb-2">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                  <UserPlus className="w-5 h-5" />
                 </div>
-              )}
-            </div>
-          )}
-
-          {/* Step 5: Standard PIN Login Screen (works both Online & Offline!) */}
-          {isAuthorizedDevice && !staffLoading && staffList.length > 0 && (
-            <form onSubmit={handlePinFormSubmit} className="space-y-5">
-              <div className="text-center">
-                <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 mb-1">
-                  <KeyRound className="w-3.5 h-3.5" />
-                  স্টাফ ও অ্যাডমিন পিন লগইন {!isOnline && '(অফলাইন মোড)'}
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">প্রথম অ্যাডমিন পিন সেটআপ</h2>
+                  <p className="text-xs text-slate-500">দোকান পরিচালনার জন্য আপনার ৪–৬ সংখ্যার গোপন পিন তৈরি করুন</p>
                 </div>
-                <p className="text-xs text-slate-500">আপনার ৪–৬ সংখ্যার পিন প্রবেশ করান</p>
               </div>
 
-              {/* PIN Dots + Direct Keyboard Input */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-center gap-2.5 py-2">
-                  {Array.from({ length: Math.max(4, pinInput.length) }).map((_, idx) => {
-                    const filled = idx < pinInput.length;
-                    return (
-                      <div
-                        key={idx}
-                        className={`w-11 h-12 rounded-xl border-2 flex items-center justify-center text-xl font-bold transition-colors ${
-                          filled
-                            ? 'border-blue-700 bg-blue-50 text-blue-700'
-                            : 'border-slate-200 bg-slate-50 text-slate-300'
-                        }`}
-                      >
-                        {filled ? '●' : ''}
-                      </div>
-                    );
-                  })}
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">অ্যাডমিনের নাম</label>
+                <input
+                  type="text"
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  placeholder="যেমন: ওমর ফুড ম্যানেজার"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">নতুন পিন (৪–৬ সংখ্যা)</label>
                 <input
                   type="password"
                   inputMode="numeric"
                   maxLength={6}
-                  value={pinInput}
-                  onChange={(e) => {
-                    setErrorMsg('');
-                    setPinInput(e.target.value.replace(/\D/g, '').slice(0, 6));
-                  }}
-                  placeholder="কীবোর্ডেও পিন লিখতে পারেন"
-                  className="w-full min-h-[42px] px-3.5 rounded-xl border border-slate-200 bg-slate-50 text-center text-sm font-mono-num tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
-                  autoFocus
+                  value={setupPin}
+                  onChange={(e) => setSetupPin(e.target.value.replace(/\D/g, ''))}
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm font-mono-num tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  placeholder="••••"
+                  required
                 />
               </div>
 
-              {/* Touch Keypad */}
-              <div className="grid grid-cols-3 gap-2.5">
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
-                  <button
-                    key={digit}
-                    type="button"
-                    onClick={() => appendDigit(digit)}
-                    className="min-h-[52px] rounded-xl border border-slate-200 bg-white hover:bg-blue-50 hover:border-blue-300 active:scale-[0.98] text-lg font-bold text-slate-800 transition-all cursor-pointer"
-                  >
-                    {toBnDigits(digit)}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPinInput('');
-                    setErrorMsg('');
-                  }}
-                  className="min-h-[52px] rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-600 cursor-pointer"
-                >
-                  মুছুন
-                </button>
-                <button
-                  type="button"
-                  onClick={() => appendDigit('0')}
-                  className="min-h-[52px] rounded-xl border border-slate-200 bg-white hover:bg-blue-50 hover:border-blue-300 active:scale-[0.98] text-lg font-bold text-slate-800 transition-all cursor-pointer"
-                >
-                  {toBnDigits('0')}
-                </button>
-                <button
-                  type="button"
-                  onClick={removeLastDigit}
-                  className="min-h-[52px] rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 flex items-center justify-center cursor-pointer"
-                  aria-label="এক সংখ্যা মুছুন"
-                >
-                  <Delete className="w-5 h-5" />
-                </button>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">পিন নিশ্চিত করুন</label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={setupConfirm}
+                  onChange={(e) => setSetupConfirm(e.target.value.replace(/\D/g, ''))}
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm font-mono-num tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600"
+                  placeholder="••••"
+                  required
+                />
               </div>
 
               <button
                 type="submit"
-                disabled={isChecking || pinInput.length < 4}
-                className="w-full min-h-[48px] rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-slate-300 text-white font-semibold text-sm transition-colors cursor-pointer"
+                disabled={isChecking}
+                className="w-full min-h-[48px] rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-blue-400 text-white font-semibold text-sm transition-colors cursor-pointer"
               >
+                {isChecking ? 'সংরক্ষণ হচ্ছে...' : 'অ্যাডমিন পিন সংরক্ষণ করুন'}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleLoginSubmit} className="space-y-5">
+              <div className="text-center space-y-1.5">
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 mx-auto flex items-center justify-center mb-2">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <h2 className="text-lg font-bold text-slate-900">
+                  পিন / পাসকোড দিয়ে প্রবেশ করুন
+                </h2>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  কোনো Gmail ছাড়াই সরাসরি স্টোর পাসকোড দিন। {!isOnline && '(অফলাইন মোড চালু)'}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700">
+                  স্টোর পাসকোড বা স্টাফ পিন
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPasscode ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    value={passcodeInput}
+                    onChange={(e) => {
+                      setErrorMsg('');
+                      setPasscodeInput(e.target.value);
+                    }}
+                    placeholder="পাসকোড লিখুন..."
+                    className="w-full min-h-[50px] pl-4 pr-12 rounded-xl border border-slate-300 bg-slate-50 text-base font-mono-num tracking-wider focus:outline-none focus:ring-2 focus:ring-blue-600 focus:bg-white"
+                    autoFocus
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasscode((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 flex items-center justify-center cursor-pointer"
+                    aria-label={showPasscode ? 'লুকান' : 'দেখুন'}
+                  >
+                    {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isChecking || passcodeInput.trim().length < 4}
+                className="w-full min-h-[50px] rounded-xl bg-blue-700 hover:bg-blue-800 disabled:bg-slate-300 text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <ShieldCheck className="w-4 h-4" />
                 {isChecking ? 'যাচাই হচ্ছে...' : 'প্রবেশ করুন'}
               </button>
 
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                <span className="truncate max-w-[200px]">
-                  {firebaseUser?.email || offlineDeviceEmail}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClearOfflineDevice?.();
-                    if (firebaseUser) {
-                      void signOutGoogleDevice();
-                    }
-                  }}
-                  className="text-blue-700 hover:underline font-medium shrink-0 cursor-pointer"
-                >
-                  ডিভাইস পরিবর্তন
-                </button>
-              </div>
+              {!firebaseUser && !cachedAuth?.isAuthorized && isOnline && (
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={handleGoogleConnect}
+                    disabled={isConnectingGoogle}
+                    className="text-xs text-slate-400 hover:text-blue-700 hover:underline cursor-pointer"
+                  >
+                    {isConnectingGoogle ? 'সংযুক্ত হচ্ছে...' : 'অ্যাডমিন Google দিয়ে প্রবেশ (ঐচ্ছিক)'}
+                  </button>
+                </div>
+              )}
+
+              {(firebaseUser || cachedAuth?.isAuthorized) && (
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                  <span className="truncate max-w-[200px]">
+                    {cachedAuth?.isAuthorized ? 'ডিভাইস সংযুক্ত আছে' : firebaseUser?.email}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClearOfflineDevice?.();
+                      if (firebaseUser) {
+                        void signOutGoogleDevice();
+                      }
+                    }}
+                    className="text-blue-700 hover:underline font-medium shrink-0 cursor-pointer"
+                  >
+                    সেশন রিসেট
+                  </button>
+                </div>
+              )}
             </form>
           )}
+
           <div className="mt-5 pt-4 border-t border-slate-100">
             <PWAInstallButton variant="primary" />
           </div>
